@@ -1663,7 +1663,15 @@ struct Arch : BaseCtx
     void fixupPlacement();
     void fixupRouting();
 
-    void routeVcc();
+    // A constant-net sink the backbone fill pass (routeVcc) could not reach.
+    struct ConstHoldout
+    {
+        NetInfo *net;  // $PACKER_GND_NET or $PACKER_VCC_NET
+        CellInfo *cell;
+        IdString port;
+        bool value;    // constant the pin requires
+    };
+    std::vector<ConstHoldout> routeVcc();
     void routeClock();
     void applyFixedRoutes(const std::string &filename);
     void writeFixedRoutes(const std::string &filename) const;
