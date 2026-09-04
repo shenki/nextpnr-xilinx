@@ -26,6 +26,7 @@
 #include <boost/iostreams/device/mapped_file.hpp>
 
 #include <iostream>
+#include <functional>
 
 NEXTPNR_NAMESPACE_BEGIN
 
@@ -1672,6 +1673,12 @@ struct Arch : BaseCtx
         bool value;    // constant the pin requires
     };
     std::vector<ConstHoldout> routeVcc();
+    // Fill pass plus the holdout fix-up loop: any sink routeVcc leaves behind is
+    // driven from a local constant LUT and the design is re-routed (reroute)
+    // until no holdout remains; remaining holdouts are fatal unless allowed.
+    void routeConstants(std::function<void()> reroute);
+    int insertConstDrivers(const std::vector<ConstHoldout> &holdouts, std::vector<ConstHoldout> &unplaced);
+    void ripupConstNets();
     void routeClock();
     void applyFixedRoutes(const std::string &filename);
     void writeFixedRoutes(const std::string &filename) const;
