@@ -216,6 +216,64 @@ struct Router2
 
     PerWireData &wire_data(WireId w) { return flat_wires[wire_to_idx.at(w)]; }
 
+    // Adopt routing that already exists in the netlist when router2 runs on
+    // a design that was routed before (a re-route after a netlist edit, e.g.
+    // the xc7 constant-holdout fix-up adding constant driver LUTs).
+    // setup_wires() records every bound wire with a use count of 1 and no
+    // arc is marked routed, so ripup_arc() returns early on a contested
+    // pre-existing path and its wires are never released: the overuse is
+    // permanent and the congestion loop stalls.  Walk each arc's bound path
+    // instead, count how many arcs share every wire (as bind_pip_internal
+    // would have) and mark complete arcs routed.  Wires left with no arc are
+    // kept at 1 so partial pre-routes still count as occupied.
+    void adopt_existing_routing()
+    {
+        for (auto &wd : flat_wires)
+            for (auto &bn : wd.bound_nets)
+                bn.second.first = 0;
+        int adopted = 0;
+        for (NetInfo *net : nets_by_udata) {
+            if (net->driver.cell == nullptr)
+                continue;
+            auto &nd = nets.at(net->udata);
+            for (size_t i = 0; i < net->users.size(); i++) {
+                auto &ad = nd.arcs.at(i);
+                if (ad.sink_wire == WireId())
+                    continue;
+                std::vector<int> path;
+                bool complete = false;
+                WireId cursor = ad.sink_wire;
+                while (true) {
+                    int idx = wire_to_idx.at(cursor);
+                    auto it = flat_wires.at(idx).bound_nets.find(net->udata);
+                    if (it == flat_wires.at(idx).bound_nets.end())
+                        break;
+                    path.push_back(idx);
+                    if (cursor == nd.src_wire) {
+                        complete = true;
+                        break;
+                    }
+                    PipId pip = it->second.second;
+                    if (pip == PipId())
+                        break;
+                    cursor = ctx->getPipSrcWire(pip);
+                }
+                if (!complete)
+                    continue;
+                for (int idx : path)
+                    flat_wires.at(idx).bound_nets.at(net->udata).first++;
+                ad.routed = true;
+                adopted++;
+            }
+        }
+        for (auto &wd : flat_wires)
+            for (auto &bn : wd.bound_nets)
+                if (bn.second.first == 0)
+                    bn.second.first = 1;
+        if (adopted > 0)
+            log_info("Adopted %d pre-routed arc(s)\n", adopted);
+    }
+
     void setup_wires()
     {
         // Set up per-wire structures, so that MT parts don't have to do any memory allocation
@@ -1431,6 +1489,7 @@ struct Router2
         auto rstart = std::chrono::high_resolution_clock::now();
         setup_nets();
         setup_wires();
+        adopt_existing_routing();
         find_all_reserved_wires();
         partition_nets();
         curr_cong_weight = cfg.init_curr_cong_weight;
