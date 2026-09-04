@@ -909,8 +909,9 @@ bool Arch::place()
     return true;
 }
 
-void Arch::routeVcc()
+std::vector<Arch::ConstHoldout> Arch::routeVcc()
 {
+    std::vector<ConstHoldout> holdouts;
     // Route BOTH constant pseudo-nets (Vcc and Gnd) through their real bridge
     // pips before the main router, so fasm.cc emits the const distribution and
     // silicon actually gets the constants.  (Originally Vcc-only + router1-only;
@@ -925,9 +926,8 @@ void Arch::routeVcc()
         { id("$PACKER_VCC_NET"), ID_PSEUDO_VCC },
         { id("$PACKER_GND_NET"), ID_PSEUDO_GND },
     };
-    // Record GND sinks the backbone fill can't reach, so a second pass can drive
-    // them from a local LUT1(INIT=0) instead (see pack_carry_xc7.cc).  One line
-    // per holdout: "<cell> <port>" (e.g. "mem_addr_reg_13__i_2 DI0").
+    // Unreached sinks are returned to the caller; NEXTPNR_GND_HOLDOUT_FILE also
+    // dumps the GND ones as "<cell> <port>" lines.
     std::ofstream holdout_out;
     if (const char *hf = getenv("NEXTPNR_GND_HOLDOUT_FILE"))
         holdout_out.open(hf);
@@ -980,11 +980,9 @@ void Arch::routeVcc()
                 max_iter_seen = iter;
             if (dest == WireId()) {
                 ++unrouted;
-                if (getenv("NEXTPNR_LOG_CONST_HOLDOUTS"))
-                    log_info("    %s HOLDOUT: %s.%s (bel %s)\n", cn.first.c_str(this),
-                             usr.cell->name.c_str(this), usr.port.c_str(this),
-                             nameOfBel(usr.cell->bel));
-                // GND holdouts only: a local LUT1(INIT=0) can replace these.
+                log_info("    %s HOLDOUT: %s.%s (bel %s, wire %s)\n", cn.first.c_str(this), usr.cell->name.c_str(this),
+                         usr.port.c_str(this), nameOfBel(usr.cell->bel), nameOfWire(sink));
+                holdouts.push_back(ConstHoldout{net, usr.cell, usr.port, pseudo_intent == ID_PSEUDO_VCC});
                 if (holdout_out.is_open() && cn.second == ID_PSEUDO_GND)
                     holdout_out << usr.cell->name.c_str(this) << " "
                                 << usr.port.c_str(this) << "\n";
@@ -999,10 +997,10 @@ void Arch::routeVcc()
                     bindPip(uh, net, STRENGTH_STRONG);
             }
         }
-        log_info("    %s: %d/%d sinks bridged (%d left to main router; max BFS %d)\n",
-                 cn.first.c_str(this), int(net->users.size()) - unrouted, int(net->users.size()),
-                 unrouted, max_iter_seen);
+        log_info("    %s: %d/%d sinks bridged (%d holdouts; max BFS %d)\n", cn.first.c_str(this),
+                 int(net->users.size()) - unrouted, int(net->users.size()), unrouted, max_iter_seen);
     }
+    return holdouts;
 }
 
 // BODGE: template a GT-clock -> BUFG route from the known-good Vivado path.
