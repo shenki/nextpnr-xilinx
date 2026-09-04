@@ -216,6 +216,66 @@ struct Router2
 
     PerWireData &wire_data(WireId w) { return flat_wires[wire_to_idx.at(w)]; }
 
+    // On a re-route, mark already-bound complete arcs as routed with correct
+    // per-wire use counts, so ripup_arc() can release them when contested.
+    void adopt_existing_routing()
+    {
+        for (auto &wd : flat_wires)
+            for (auto &bn : wd.bound_nets)
+                bn.second.first = 0;
+        int adopted = 0;
+        for (NetInfo *net : nets_by_udata) {
+            const bool net_undriven = net->driver.cell == nullptr;
+            if (net_undriven)
+                continue;
+            auto &nd = nets.at(net->udata);
+            for (size_t i = 0; i < net->users.size(); i++) {
+                auto &ad = nd.arcs.at(i);
+                const bool arc_has_no_sink_wire = ad.sink_wire == WireId();
+                if (arc_has_no_sink_wire)
+                    continue;
+                std::vector<int> path;
+                bool complete = false;
+                WireId cursor = ad.sink_wire;
+                while (true) {
+                    int idx = wire_to_idx.at(cursor);
+                    auto &bound_nets = flat_wires.at(idx).bound_nets;
+                    auto it = bound_nets.find(net->udata);
+                    const bool wire_not_bound_to_net = it == bound_nets.end();
+                    if (wire_not_bound_to_net)
+                        break;
+                    path.push_back(idx);
+                    const bool reached_source = cursor == nd.src_wire;
+                    if (reached_source) {
+                        complete = true;
+                        break;
+                    }
+                    PipId pip = it->second.second;
+                    const bool no_uphill_pip_recorded = pip == PipId();
+                    if (no_uphill_pip_recorded)
+                        break;
+                    cursor = ctx->getPipSrcWire(pip);
+                }
+                if (!complete)
+                    continue;
+                for (int idx : path)
+                    flat_wires.at(idx).bound_nets.at(net->udata).first++;
+                ad.routed = true;
+                adopted++;
+            }
+        }
+        for (auto &wd : flat_wires) {
+            for (auto &bn : wd.bound_nets) {
+                const bool binding_used_by_no_arc = bn.second.first == 0;
+                if (binding_used_by_no_arc)
+                    bn.second.first = 1;
+            }
+        }
+        const bool any_adopted = adopted > 0;
+        if (any_adopted)
+            log_info("Adopted %d pre-routed arc(s)\n", adopted);
+    }
+
     void setup_wires()
     {
         // Set up per-wire structures, so that MT parts don't have to do any memory allocation
@@ -1431,6 +1491,7 @@ struct Router2
         auto rstart = std::chrono::high_resolution_clock::now();
         setup_nets();
         setup_wires();
+        adopt_existing_routing();
         find_all_reserved_wires();
         partition_nets();
         curr_cong_weight = cfg.init_curr_cong_weight;
