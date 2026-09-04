@@ -1234,16 +1234,24 @@ struct Router2
     {
         bool success = true;
         std::vector<WireId> net_wires;
-        for (auto net : nets_by_udata) {
+        auto routable = [&](NetInfo *net) {
 #ifdef ARCH_ECP5
             if (net->is_global)
-                continue;
+                return false;
 #endif
             // Constant nets are deliberately left unrouted by router2 (routed by the
             // final router1 route_const_arc pass), so there is nothing to bind here.
-            if (net->name == ctx->id("$PACKER_GND_NET") || net->name == ctx->id("$PACKER_VCC_NET"))
+            return net->name != ctx->id("$PACKER_GND_NET") && net->name != ctx->id("$PACKER_VCC_NET");
+        };
+        // Ripup wires and pips used by every net in nextpnr's structures FIRST.
+        // On a re-route of an already routed design the context still holds
+        // each net's previous path; binding net by net would then trip
+        // checkWireAvail on a wire the router moved to another net whose old
+        // binding has not been released yet, a spurious failure that rips a
+        // good arc.
+        for (auto net : nets_by_udata) {
+            if (!routable(net))
                 continue;
-            // Ripup wires and pips used by the net in nextpnr's structures
             net_wires.clear();
             for (auto &w : net->wires) {
                 if (w.second.strength <= STRENGTH_STRONG)
@@ -1251,6 +1259,10 @@ struct Router2
             }
             for (auto w : net_wires)
                 ctx->unbindWire(w);
+        }
+        for (auto net : nets_by_udata) {
+            if (!routable(net))
+                continue;
             // Bind the arcs using the routes we have discovered
             for (size_t i = 0; i < net->users.size(); i++) {
                 if (!bind_and_check(net, i)) {
