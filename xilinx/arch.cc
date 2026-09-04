@@ -2132,27 +2132,31 @@ bool Arch::route()
     }
     findSourceSinkLocations();
 
-    bool result;
-    if (router == "router1") {
-        result = router1(getCtx(), Router1Cfg(getCtx()));
-    } else if (router == "router2") {
-        auto cfg = Router2Cfg(getCtx());
-        cfg.bb_margin_x = 4;
-        cfg.bb_margin_y = 4;
-        cfg.backwards_max_iter = 200;
-        cfg.perf_profile = true;
-        router2(getCtx(), cfg);
-        result = true;
-    } else {
-        log_error("Xilinx architecture does not support router '%s'\n", router.c_str());
-    }
+    bool result = true;
+    auto run_router = [&]() {
+        if (router == "router1") {
+            result = router1(getCtx(), Router1Cfg(getCtx()));
+        } else if (router == "router2") {
+            auto cfg = Router2Cfg(getCtx());
+            cfg.bb_margin_x = 4;
+            cfg.bb_margin_y = 4;
+            cfg.backwards_max_iter = 200;
+            cfg.perf_profile = true;
+            router2(getCtx(), cfg);
+            result = true;
+        } else {
+            log_error("Xilinx architecture does not support router '%s'\n", router.c_str());
+        }
+    };
+    run_router();
     // routeVcc as a FILL pass: run AFTER the main router so signal nets claim
     // their wires first, then bridge the constant (pwr/gnd) nets through whatever
     // real pips remain free (the BFS already gates on checkWireAvail/checkPipAvail).
     // Pre-router binding over-constrained routing and made router2 fail to route
     // address-path FF arcs (e.g. mem_addr O5->AFFMUX), so const-routed builds
     // exited 255; as a post-router fill it only consumes leftover resources.
-    routeVcc();
+    // routeConstants() drives what the fill misses from local LUTs and re-routes.
+    routeConstants(run_router);
     fixupRouting();
     // router1 runs its own final timing analysis; the router2 flow
     // historically ended without one, so the last "Max frequency" lines the

@@ -54,6 +54,9 @@ po::options_description UspCommandHandler::getArchOptions()
                            "frozen hard-macro routing to LOCK before routing (net + src->dst pips)");
     specific.add_options()("write-fixed-routes", po::value<std::string>(),
                            "after routing, dump fabric routing in --fixed-routes format");
+    specific.add_options()("allow-const-holdouts",
+                           "only warn when a constant (GND/VCC) sink cannot be routed; the pin's silicon "
+                           "value is then undefined (default: error)");
 
     return specific;
 }
@@ -91,6 +94,9 @@ void UspCommandHandler::customAfterLoad(Context *ctx)
     }
     if (vm.count("fixed-routes"))
         ctx->settings[ctx->id("fixed-routes")] = vm["fixed-routes"].as<std::string>();
+    const bool allow_const_holdouts_given = vm.count("allow-const-holdouts") != 0;
+    if (allow_const_holdouts_given)
+        ctx->allow_const_holdouts = true;
 }
 
 int main(int argc, char *argv[])
