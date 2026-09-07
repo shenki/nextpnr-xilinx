@@ -1,0 +1,44 @@
+diff --git a/fasm2bels/fasm2bels.py b/fasm2bels/fasm2bels.py
+index 4154f743ebb9..d614501b43b7 100644
+--- a/fasm2bels/fasm2bels.py
++++ b/fasm2bels/fasm2bels.py
+@@ -87,6 +87,12 @@ PROCESS_TILE = {
+     'CLBLM_R': process_clb,
+     'INT_L': null_process,
+     'INT_R': null_process,
++    'INT_INTERFACE_L': null_process,
++    'INT_INTERFACE_R': null_process,
++    'IO_INT_INTERFACE_L': null_process,
++    'IO_INT_INTERFACE_R': null_process,
++    'BRAM_INT_INTERFACE_L': null_process,
++    'BRAM_INT_INTERFACE_R': null_process,
+     'LIOB33': process_iobs,
+     'RIOB33': process_iobs,
+     'LIOB33_SING': process_iobs,
+diff --git a/fasm2bels/models/clb_models.py b/fasm2bels/models/clb_models.py
+index 7f0a20f1c220..3253cc1a8ead 100644
+--- a/fasm2bels/models/clb_models.py
++++ b/fasm2bels/models/clb_models.py
+@@ -238,8 +238,8 @@ def create_srl16(site, srl, srl_type, part, up_chain):
+                             '{}MC31'.format(srl_plus_1))])
+         else:
+             if srl in 'ABC':
+-                assert site.has_feature(
+-                    '{srl}LUT.DI1MUX.{srl}I'.format(srl=srl))
++                # {srl}LUT.DI1MUX.{srl}I is the all-zero encoding of the
++                # mux; nextpnr-xilinx leaves it out of the FASM.
+                 site_pips = [('site_pip', '{}DI1MUX'.format(srl),
+                               '{}I'.format(srl))]
+             else:
+@@ -1760,6 +1760,11 @@ def process_slice(top, s):
+     if any_srls:
+         can_have_carry4 = False
+ 
++    # nextpnr-xilinx emits no PRECYINIT feature for a slice without a
++    # CARRY4; treat that as "no carry" instead of asserting.
++    if not any(site.has_feature('PRECYINIT.' + x) for x in ('AX', 'C0', 'C1', 'CIN')):
++        can_have_carry4 = False
++
+     if can_have_carry4:
+         bel = Bel('CARRY4', priority=1)
+         bel.set_bel('CARRY4')

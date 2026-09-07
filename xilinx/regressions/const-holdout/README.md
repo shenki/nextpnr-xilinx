@@ -59,6 +59,47 @@ In the unfixed fasm the victim tile has `INT_R_X3Y108.IMUX8.GFAN0` and
 `INT_R_X3Y108.IMUX24.GFAN0` but no `IMUX31` or `IMUX47` feature, the same
 signature as the original failing designs.
 
+## Cross-check with fasm2bels
+
+`fasm2bels/run.sh` uses
+[f4pga-xc-fasm2bels](https://github.com/chipsalliance/f4pga-xc-fasm2bels)
+to recover, from each FASM, the netlist the bitstream really implements,
+then simulates both recovered netlists next to the RTL with yosys's `sim`
+pass (`fasm2bels/tb.v`, `fasm2bels/compare_vcd.py`). fasm2bels needs the
+small patch in `fasm2bels/fasm2bels-nextpnr-fasm.patch`: it expects the
+zero-bit `PRECYINIT.C0` and `DI1MUX` features that symbiflow always emits
+and nextpnr leaves out, and it has no entry for the `IO_INT_INTERFACE`
+tiles nextpnr routes through.
+
+The two recovered netlists differ in eight lines, all in the RAM32M at
+SLICE_X2Y108:
+
+    unfixed:  .ADDRA({1'b0, ...})  .ADDRB({1'b0, ...})  .ADDRC({1'b1, ...})  .ADDRD({1'b1, ...})
+    fixed:    .ADDRA({1'b0, ...})  .ADDRB({1'b0, ...})  .ADDRC({CLBLM_R_X3Y108_SLICE_X3Y108_BO6, ...})  .ADDRD({... same ...})
+
+`SLICE_X3Y108_BO6` is the INIT-0 LUT the fix inserted. In the unfixed
+bitstream the unprogrammed C5 and D5 input muxes read as 1, which is what
+fasm2bels models them as.
+
+Simulating 4000 cycles with the same stimulus:
+
+| | unfixed netlist vs RTL | fixed netlist vs RTL |
+|---|---|---|
+| led[0] (empty), led[1] (full), led[2] (valid) | equal every cycle | equal every cycle |
+| led[3] (xor of FIFO data) | differs on 2056 cycles, first at cycle 7 | equal every cycle |
+| RAM32M lane A and B outputs (data bits 3:0) | never toggle | about 1000 toggles each |
+| RAM32M lane C outputs (data bits 5:4) | identical to fixed | |
+
+The flow control is intact and the data is wrong in the way the address
+pins predict: writes go to entries 16..31, lanes A and B read entries
+0..15 that were never written, lane C reads 16..31.
+
+The comparison RTL is `top.v` with the LFSR seed's bit 10 cleared. Yosys
+folds three LFSR stages into an SRL16E with INIT 100, and nextpnr-xilinx
+writes an all-zero LUT INIT for that SRL, so on the chip (and in the
+recovered netlist) that stage starts at 0. That is a second, unrelated
+defect (SRL INIT lost) and is not part of this case.
+
 ## How the defaults were chosen
 
 `sweep.sh` runs `run.sh` over a grid of `N` and seeds against an unfixed
