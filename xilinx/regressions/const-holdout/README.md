@@ -66,10 +66,12 @@ signature as the original failing designs.
 to recover, from each FASM, the netlist the bitstream really implements,
 then simulates both recovered netlists next to the RTL with yosys's `sim`
 pass (`fasm2bels/tb.v`, `fasm2bels/compare_vcd.py`). fasm2bels needs the
-small patch in `fasm2bels/fasm2bels-nextpnr-fasm.patch`: it expects the
-zero-bit `PRECYINIT.C0` and `DI1MUX` features that symbiflow always emits
-and nextpnr leaves out, and it has no entry for the `IO_INT_INTERFACE`
-tiles nextpnr routes through.
+small patch in `fasm2bels/fasm2bels-nextpnr-fasm.patch` (also branch
+`nextpnr-xilinx-fasm` of https://github.com/shenki/f4pga-xc-fasm2bels): it
+expects the zero-bit `PRECYINIT.C0` feature that symbiflow always emits and
+nextpnr leaves out, it emits both SRL16 halves of a SMALL SRL and asserts
+on the unused one, and it has no entry for the `IO_INT_INTERFACE` tiles
+nextpnr routes through.
 
 The two recovered netlists differ in eight lines, all in the RAM32M at
 SLICE_X2Y108:

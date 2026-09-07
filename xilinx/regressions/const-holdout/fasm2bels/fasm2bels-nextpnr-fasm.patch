@@ -16,27 +16,37 @@ index 4154f743ebb9..d614501b43b7 100644
      'RIOB33': process_iobs,
      'LIOB33_SING': process_iobs,
 diff --git a/fasm2bels/models/clb_models.py b/fasm2bels/models/clb_models.py
-index 7f0a20f1c220..3253cc1a8ead 100644
+index 7f0a20f1c220..b4b1fec240ff 100644
 --- a/fasm2bels/models/clb_models.py
 +++ b/fasm2bels/models/clb_models.py
-@@ -238,8 +238,8 @@ def create_srl16(site, srl, srl_type, part, up_chain):
-                             '{}MC31'.format(srl_plus_1))])
-         else:
-             if srl in 'ABC':
--                assert site.has_feature(
--                    '{srl}LUT.DI1MUX.{srl}I'.format(srl=srl))
-+                # {srl}LUT.DI1MUX.{srl}I is the all-zero encoding of the
-+                # mux; nextpnr-xilinx leaves it out of the FASM.
-                 site_pips = [('site_pip', '{}DI1MUX'.format(srl),
-                               '{}I'.format(srl))]
-             else:
-@@ -1760,6 +1760,11 @@ def process_slice(top, s):
+@@ -1082,6 +1082,16 @@ def process_slice(top, s):
+                                 '{}6SRL'.format(row_plus_1))
+                             if not up_srl:
+                                 continue
++                        if part == '5' and not up_chain and row in 'ABC' \
++                                and not site.has_feature(
++                                    '{}LUT.DI1MUX.{}I'.format(row, row)):
++                            # The 5LUT half gets its data through the DI1
++                            # mux.  With neither the local input nor the
++                            # chain from the row above selected it has no
++                            # source and is not in use; a flow that only
++                            # emits set bits (nextpnr-xilinx) leaves the
++                            # mux features out for such a slice.
++                            continue
+ 
+                         # Determine whether to use SRL16E or SRLC16E
+                         srl_type = 'SRL16E'
+@@ -1760,6 +1770,15 @@ def process_slice(top, s):
      if any_srls:
          can_have_carry4 = False
  
-+    # nextpnr-xilinx emits no PRECYINIT feature for a slice without a
-+    # CARRY4; treat that as "no carry" instead of asserting.
-+    if not any(site.has_feature('PRECYINIT.' + x) for x in ('AX', 'C0', 'C1', 'CIN')):
++    # PRECYINIT.C0 is the all-zero encoding, so a flow that only emits set
++    # bits (nextpnr-xilinx) writes no PRECYINIT feature at all for a slice
++    # without a CARRY4.  Without one of the four options there is no carry
++    # chain to model.
++    if not any(
++            site.has_feature('PRECYINIT.' + x)
++            for x in ('AX', 'C0', 'C1', 'CIN')):
 +        can_have_carry4 = False
 +
      if can_have_carry4:
