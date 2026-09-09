@@ -2509,7 +2509,13 @@ struct FasmBackend
         int high = 1, low = 1, phasemux = 0, delaytime = 0, frac = 0;
         bool no_count = false, edge = false;
         double divide = float_or_default(ci, name + ((name == "CLKFBOUT") ? "_MULT" : "_DIVIDE"), 1);
-        double phase = float_or_default(ci, name + "_PHASE", 1);
+        // Xilinx's documented default for CLKOUT<n>_PHASE/CLKFBOUT_PHASE is 0.0
+        // degrees (UG472) -- defaulting to 1 here computed a spurious non-zero
+        // PHASE_MUX bit for any counter whose PHASE param the source netlist
+        // doesn't set explicitly (e.g. CLKFBOUT, when only CLKOUT0 has an
+        // explicit PHASE), found via a raw-bit diff against a real Vivado
+        // MMCM bitstream (nextpnr-xilinx#177 MMCM-lock investigation).
+        double phase = float_or_default(ci, name + "_PHASE", 0);
         if (divide <= 1) {
             no_count = true;
         } else {
@@ -2763,7 +2769,13 @@ struct FasmBackend
         bool no_count = false, edge = false;
         double divide = float_or_default(ci, name + ((name == "CLKFBOUT") ? "_MULT_F" :
                                                      (name == "CLKOUT0" ? "_DIVIDE_F" : "_DIVIDE")), 1);
-        double phase = float_or_default(ci, name + "_PHASE", 1);
+        // Xilinx's documented default for CLKOUT<n>_PHASE/CLKFBOUT_PHASE is 0.0
+        // degrees (UG472) -- defaulting to 1 here computed a spurious non-zero
+        // PHASE_MUX bit for any counter whose PHASE param the source netlist
+        // doesn't set explicitly (e.g. CLKFBOUT, when only CLKOUT0 has an
+        // explicit PHASE), found via a raw-bit diff against a real Vivado
+        // MMCM bitstream (nextpnr-xilinx#177 MMCM-lock investigation).
+        double phase = float_or_default(ci, name + "_PHASE", 0);
         if (divide <= 1) {
             no_count = true;
         } else {

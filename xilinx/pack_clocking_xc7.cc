@@ -248,6 +248,14 @@ void XC7Packer::pack_plls()
                     if (nn != nullptr && (nn->name == gnd || nn->name == vcc)) {
                         disconnect_port(ctx, ci, ctx->id(p));
                         ++n;
+                        // Same mechanism as the PWRDWN fix above: a disconnected
+                        // GND-tied RST reads as asserted on the site's own floating
+                        // default unless IS_RST_INVERTED is set -- confirmed via
+                        // the same raw-bit diff against a real Vivado MMCM
+                        // bitstream (nextpnr-xilinx#177).
+                        bool rst_wanted_off = p == "RST" && nn->name == gnd;
+                        if (rst_wanted_off)
+                            ci->params[ctx->id("IS_RST_INVERTED")] = Property(1);
                     }
                 }
             }
