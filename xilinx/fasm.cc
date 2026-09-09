@@ -2002,7 +2002,14 @@ struct FasmBackend
                 if (prog_usr != "TRUE" && prog_usr != "FALSE")
                     log_error("Invalid PROG_USR attribute in STARTUPE2 of '%s\n'. Allowed values are: TRUE, FALSE.", prog_usr.c_str());
                 write_bit("STARTUP.PROG_USR", prog_usr == "TRUE");
-                write_bit("STARTUP.USRCCLKO_CONNECTED", !net_is_constant(get_net_or_empty(ci, ctx->id("USRCCLKO"))));
+                // A constant-tied USRCCLKO is now disconnected entirely by pack_cfg()
+                // (nullptr net) rather than left wired to $PACKER_GND_NET/_VCC_NET, so
+                // net_is_constant(nullptr) -- which returns false -- can no longer be
+                // used to detect "not really connected" here. Treat "no net at all"
+                // the same as "constant": only a genuine dynamic net counts as connected.
+                NetInfo *usrcclko_net = get_net_or_empty(ci, ctx->id("USRCCLKO"));
+                bool usrcclko_connected = usrcclko_net != nullptr && !net_is_constant(usrcclko_net);
+                write_bit("STARTUP.USRCCLKO_CONNECTED", usrcclko_connected);
             }
 
             pop();
