@@ -20,6 +20,7 @@
 // Constant-net holdouts: sinks routeVcc() cannot reach are driven from a local
 // constant LUT and the design is re-routed; leftovers are fatal unless allowed.
 
+#include <algorithm>
 #include <map>
 #include <set>
 #include "cells.h"
@@ -199,6 +200,33 @@ int Arch::insertConstDrivers(const std::vector<ConstHoldout> &holdouts, std::vec
         return BelId();
     };
 
+    // Every user on a holdout's site wire (e.g. SLICEM WA1..6 and A1..6) must
+    // move with it, since one wire cannot be driven by two nets.
+    std::map<IdString, std::map<WireId, std::vector<PortRef>>> users_by_wire;
+    auto wire_users = [&](NetInfo *net, WireId w) -> const std::vector<PortRef> & {
+        auto &by_wire = users_by_wire[net->name];
+        const bool not_yet_grouped = by_wire.empty();
+        if (not_yet_grouped)
+            for (auto &usr : net->users)
+                by_wire[ctx->getNetinfoSinkWire(net, usr)].push_back(usr);
+        return by_wire.at(w);
+    };
+    auto sink_wire = [&](const ConstHoldout &h) {
+        PortRef pr;
+        pr.cell = h.cell;
+        pr.port = h.port;
+        return ctx->getNetinfoSinkWire(h.net, pr);
+    };
+    auto move_users = [&](NetInfo *from, WireId w, NetInfo *to, const char *how) {
+        std::vector<PortRef> users = wire_users(from, w);
+        for (auto &pr : users) {
+            disconnect_port(ctx, pr.cell, pr.port);
+            connect_port(ctx, to, pr.cell, pr.port);
+            assignCellInfo(pr.cell);
+            log_info("    %s.%s <- %s%s\n", pr.cell->name.c_str(ctx), pr.port.c_str(ctx), to->name.c_str(ctx), how);
+        }
+    };
+
     // One driver LUT per (constant, sink tile); std::map keeps the order deterministic.
     std::map<std::pair<int, int>, std::vector<ConstHoldout>> groups;
     for (auto &h : holdouts) {
@@ -209,6 +237,35 @@ int Arch::insertConstDrivers(const std::vector<ConstHoldout> &holdouts, std::vec
     int added = 0, seq = 0;
     for (auto &g : groups) {
         bool value = g.first.first != 0;
+        NetInfo *cnet = g.second.front().net;
+        // A wire an earlier pass already gave to a LUT of this constant takes
+        // its remaining users; anything else gets a new LUT.
+        std::vector<WireId> need_new;
+        std::vector<ConstHoldout> need_new_holdouts;
+        std::set<WireId> seen;
+        for (auto &h : g.second) {
+            WireId w = sink_wire(h);
+            const bool wire_already_seen = !seen.insert(w).second;
+            if (wire_already_seen)
+                continue;
+            NetInfo *bound = getBoundWireNet(w);
+            const bool wire_has_this_constant =
+                    bound != nullptr && bound != cnet && const_net_value(ctx, bound) == (value ? 1 : 0);
+            if (wire_has_this_constant) {
+                move_users(cnet, w, bound, " (wire already driven by it)");
+                continue;
+            }
+            need_new.push_back(w);
+        }
+        for (auto &h : g.second) {
+            const bool wire_needs_new_lut = std::find(need_new.begin(), need_new.end(), sink_wire(h)) != need_new.end();
+            if (wire_needs_new_lut)
+                need_new_holdouts.push_back(h);
+        }
+        const bool every_wire_already_driven = need_new.empty();
+        if (every_wire_already_driven)
+            continue;
+
         const char *base = value ? "$PACKER_VCC_NET" : "$PACKER_GND_NET";
         IdString cname, nname;
         while (true) {
@@ -234,26 +291,22 @@ int Arch::insertConstDrivers(const std::vector<ConstHoldout> &holdouts, std::vec
         nets[nname] = std::move(net);
         assignCellInfo(lut_ptr);
 
-        Loc origin = getBelLocation(g.second.front().cell->bel);
+        Loc origin = getBelLocation(need_new_holdouts.front().cell->bel);
         BelId bel = place_lut(lut_ptr, origin);
         const bool no_free_lut_bel = bel == BelId();
         if (no_free_lut_bel) {
             log_warning("    no free LUT bel within %d tiles of %s for a %s driver\n", max_radius,
-                        nameOfBel(g.second.front().cell->bel), value ? "VCC" : "GND");
+                        nameOfBel(need_new_holdouts.front().cell->bel), value ? "VCC" : "GND");
             disconnect_port(ctx, lut_ptr, id_O6);
             cells.erase(cname);
             nets.erase(nname);
-            for (auto &h : g.second)
+            for (auto &h : need_new_holdouts)
                 unplaced.push_back(h);
             continue;
         }
-        for (auto &h : g.second) {
-            disconnect_port(ctx, h.cell, h.port);
-            connect_port(ctx, net_ptr, h.cell, h.port);
-            assignCellInfo(h.cell);
-            log_info("    %s.%s <- %s (bel %s)\n", h.cell->name.c_str(ctx), h.port.c_str(ctx), cname.c_str(ctx),
-                     nameOfBel(bel));
-        }
+        std::string how = stringf(" (bel %s)", nameOfBel(bel));
+        for (WireId w : need_new)
+            move_users(cnet, w, net_ptr, how.c_str());
         added++;
     }
     return added;
