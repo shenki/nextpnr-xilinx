@@ -604,6 +604,45 @@ struct FasmBackend
                 lbound = (i == 1) ? 0 : 32;
                 ubound = (i == 1) ? 32 : 64;
             }
+            std::string orig_type = str_or_default(lut->attrs, ctx->id("X_ORIG_TYPE"), "");
+            if (orig_type == "SRL16E" || orig_type == "SRLC32E") {
+                // pack_srls() keeps the shift register's own (16- or 32-bit)
+                // INIT on the SLICE_LUTX cell it creates, but this cell has
+                // no logical LUT inputs to map through X_ORIG_PORT_* -- the
+                // phys_to_log walk below would leave every bit zero. Each
+                // SRL INIT bit k is stored in the LUT INIT at both bit 2k
+                // and 2k+1 (nextpnr-xilinx#181).
+                //
+                // For SRL16E specifically, pack.cc's pack_srls() ties A6
+                // (LUT address bit 5) to VCC when the cell is in the 6LUT
+                // position (i==0) -- so only addresses [32:64) are ever
+                // physically read, regardless of whether the sibling 5LUT
+                // half happens to also be populated. The lbound/ubound
+                // computed above only narrows to that when lut5 AND lut6
+                // are BOTH non-null, which is a different (fracturing)
+                // condition -- when the 5LUT half is genuinely unused
+                // (lut5 == nullptr, the common case), lbound/ubound stay at
+                // the full, un-narrowed [0:64) range, and the real bits get
+                // written to the address half A6 ties off (unreachable),
+                // leaving the actually-read half all zero. Confirmed on
+                // real hardware: without this override the SRL16E half of
+                // this fix reads back as 0 regardless of its INIT; with it,
+                // it reads correctly. SRLC32E never hits this: it only ties
+                // A1, using the full 64-bit space directly regardless of
+                // position, so it needs no override here.
+                if (orig_type == "SRL16E") {
+                    lbound = (i == 1) ? 0 : 32;
+                    ubound = (i == 1) ? 32 : 64;
+                }
+                int width = (ubound - lbound) / 2;
+                Property srl_init = get_or_default(lut->params, ctx->id("INIT"), Property()).extract(0, width);
+                for (int k = 0; k < width; k++) {
+                    bool bit = (srl_init.str.at(k) == Property::S1);
+                    bits[lbound + 2 * k] = bit;
+                    bits[lbound + 2 * k + 1] = bit;
+                }
+                continue;
+            }
             Property init = get_or_default(lut->params, ctx->id("INIT"), Property()).extract(0, 64);
             for (int j = lbound; j < ubound; j++) {
                 int log_index = 0;
