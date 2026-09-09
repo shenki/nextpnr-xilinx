@@ -1266,6 +1266,47 @@ void XC7Packer::pack_cfg()
             preplace_unique(ci);
         }
     }
+
+    // STARTUPE2's control pins (GSR/GTS/KEYCLEARB/PACK/USRCCLKO/USRCCLKTS/
+    // USRDONEO/USRDONETS/CLK) are commonly tied to a constant when unused
+    // (e.g. GTS/KEYCLEARB/PACK left at '0). Routing $PACKER_GND_NET/
+    // $PACKER_VCC_NET into them via the general-fabric BFS (the same
+    // mechanism already found to misbehave for BUFHCE's CE pin and CARRY4's
+    // PRECYINIT) writes ~40 bits into CFG_CENTER_MID that don't correspond to
+    // any documented feature in prjxray's segbits database at all, and a
+    // hardware A/B test against an equivalent Vivado-implemented design
+    // showed those bits present only on the nextpnr side (nextpnr-xilinx#177
+    // GSR investigation) -- Vivado's own bitstream has all-zero frames for
+    // this tile's constant-tied pins, i.e. it simply leaves them unrouted.
+    // Match that: disconnect any STARTUP_STARTUP control pin driven by a
+    // constant net instead of letting the router bridge it through general
+    // interconnect.
+    {
+        IdString gnd = ctx->id("$PACKER_GND_NET");
+        IdString vcc = ctx->id("$PACKER_VCC_NET");
+        static const std::vector<std::string> startup_const_pins = {
+            "GSR", "GTS", "KEYCLEARB", "PACK", "USRCCLKO",
+            "USRCCLKTS", "USRDONEO", "USRDONETS", "CLK"
+        };
+        int nfix = 0;
+        for (auto cell : sorted(ctx->cells)) {
+            CellInfo *ci = cell.second;
+            if (ci->type != id_STARTUP_STARTUP)
+                continue;
+            for (const auto &pin : startup_const_pins) {
+                IdString port = ctx->id(pin);
+                NetInfo *net = get_net_or_empty(ci, port);
+                bool is_const = net != nullptr && (net->name == gnd || net->name == vcc);
+                if (is_const) {
+                    disconnect_port(ctx, ci, port);
+                    ++nfix;
+                }
+            }
+        }
+        if (nfix > 0)
+            log_info("    disconnected %d constant-tied STARTUPE2 control pin(s) "
+                      "(left unrouted, matching Vivado's own convention)\n", nfix);
+    }
 }
 
 NEXTPNR_NAMESPACE_END
