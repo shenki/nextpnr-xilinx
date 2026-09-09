@@ -348,9 +348,18 @@ class NextpnrTileType:
 			# Exclude certain route-through pips that are broken or unsupported
 			if p.is_route_thru() and p.src_wire().name().endswith("_CE_INT"):
 				continue
+			# is_route_thru() only ever sees pips with is_pseudo=1. In every CLB
+			# tile type (CLBLL_L/R, CLBLM_L/R), across every packaged family,
+			# the only is_pseudo=1 entries are the LUT-input aggregate ("hint")
+			# pass-throughs (e.g. CLBLL_L_A/AMUX) -- these are metadata only,
+			# safe to drop, and are the ones this condition actually excludes
+			# (cross-reference #161 for their eventual proper handling). The
+			# real, always-present connections this filter was once suspected
+			# of also dropping (FAN->CE, IMUX->A1-D1, etc.) are ordinary,
+			# non-pseudo pips -- is_route_thru() is false for them, so they
+			# were never affected by this filter (verified: identical chipdb
+			# output with/without this condition, see nextpnr-xilinx#173).
 			if p.is_route_thru() and is_xc7_logic:
-				continue
-			if p.is_route_thru() and "TFB" in p.dst_wire().name():
 				continue
 			if p.src_wire().name().startswith("CLK_BUFG_R_FBG_OUT"):
 				continue
