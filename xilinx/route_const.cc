@@ -324,8 +324,10 @@ void Arch::routeConstants(std::function<void()> reroute)
     const bool no_drivers = getenv("NEXTPNR_NO_CONST_LUT_DRIVERS") != nullptr;
 
     // Fatal by default: an unrouted constant sink reads as 1 in silicon.
-    auto report = [&](const std::vector<ConstHoldout> &left, const char *why) {
-        for (auto &h : left) {
+    auto report = [&](const std::vector<std::pair<ConstHoldout, const char *>> &left) {
+        for (auto &e : left) {
+            const ConstHoldout &h = e.first;
+            const char *why = e.second;
             PortRef pr;
             pr.cell = h.cell;
             pr.port = h.port;
@@ -349,7 +351,12 @@ void Arch::routeConstants(std::function<void()> reroute)
     };
 
     std::set<std::pair<IdString, IdString>> given_up; // (cell, port) already reported
-    std::vector<ConstHoldout> given_up_list;
+    std::vector<std::pair<ConstHoldout, const char *>> given_up_list;
+    const char *why_unplaced = no_drivers ? "constant LUT drivers disabled" : "no route or no free LUT bel";
+    auto give_up = [&](const ConstHoldout &h, const char *why) {
+        given_up.insert(std::make_pair(h.cell->name, h.port));
+        given_up_list.push_back(std::make_pair(h, why));
+    };
     int drivers = 0, dont_care = 0, passes = 0;
     for (int pass = 0;; pass++) {
         auto holdouts = routeVcc();
@@ -367,29 +374,41 @@ void Arch::routeConstants(std::function<void()> reroute)
             const bool already_given_up = given_up.count(std::make_pair(h.cell->name, h.port)) != 0;
             if (already_given_up)
                 continue;
+            // A sink wire no pip drives (DSP48E1 INMODE/ALUMODE/OPMODE, #159) is
+            // unreachable for any net, so report it rather than add a driver.
+            PortRef pr;
+            pr.cell = h.cell;
+            pr.port = h.port;
+            WireId sink = ctx->getNetinfoSinkWire(h.net, pr);
+            auto uphill = getPipsUphill(sink);
+            const bool sink_has_uphill_pip = uphill.begin() != uphill.end();
+            if (!sink_has_uphill_pip) {
+                give_up(h, "no pip drives the sink wire");
+                continue;
+            }
             real.push_back(h);
         }
         const bool nothing_left = real.empty();
         if (nothing_left)
             break;
         if (no_drivers) {
-            given_up_list.insert(given_up_list.end(), real.begin(), real.end());
+            for (auto &h : real)
+                give_up(h, why_unplaced);
             break;
         }
         const bool out_of_passes = pass >= max_passes;
         if (out_of_passes) {
             log_warning("constant holdouts remain after %d re-route pass(es)\n", pass);
-            given_up_list.insert(given_up_list.end(), real.begin(), real.end());
+            for (auto &h : real)
+                give_up(h, why_unplaced);
             break;
         }
         log_info("Constant fill left %d sink(s) unreached; driving them from local constant LUTs (pass %d)\n",
                  int(real.size()), pass + 1);
         std::vector<ConstHoldout> unplaced;
         drivers += insertConstDrivers(real, unplaced);
-        for (auto &h : unplaced) {
-            given_up.insert(std::make_pair(h.cell->name, h.port));
-            given_up_list.push_back(h);
-        }
+        for (auto &h : unplaced)
+            give_up(h, why_unplaced);
         const bool nothing_placed = unplaced.size() == real.size();
         if (nothing_placed)
             break; // nothing changed, re-routing would not help
@@ -406,7 +425,7 @@ void Arch::routeConstants(std::function<void()> reroute)
                  drivers, passes, dont_care);
     const bool have_leftovers = !given_up_list.empty();
     if (have_leftovers)
-        report(given_up_list, no_drivers ? "constant LUT drivers disabled" : "no route or no free LUT bel");
+        report(given_up_list);
 }
 
 NEXTPNR_NAMESPACE_END
