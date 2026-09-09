@@ -228,6 +228,18 @@ void XC7Packer::pack_plls()
                 if (nn != nullptr && (nn->name == gnd || nn->name == vcc)) {
                     disconnect_port(ctx, ci, ctx->id(p));
                     ++n;
+                    // Once PWRDWN is left unrouted (matching Vivado), the site's own
+                    // floating default reads as asserted (powered down) unless
+                    // IS_PWRDWN_INVERTED is set -- confirmed via a raw-bit diff
+                    // against a real Vivado MMCM bitstream (nextpnr-xilinx#177 MMCM
+                    // lock investigation): Vivado sets ZINV_PWRDWN on this exact
+                    // disconnect for a GND-tied (i.e. "don't power down") PWRDWN.
+                    // Only apply this for the GND-tied case; a VCC-tied PWRDWN
+                    // explicitly asked to be powered down and disconnecting it
+                    // shouldn't also flip that intent.
+                    bool pwrdwn_wanted_off = p == "PWRDWN" && nn->name == gnd;
+                    if (pwrdwn_wanted_off)
+                        ci->params[ctx->id("IS_PWRDWN_INVERTED")] = Property(1);
                 }
             }
             if (is_mmcm) {
@@ -236,6 +248,14 @@ void XC7Packer::pack_plls()
                     if (nn != nullptr && (nn->name == gnd || nn->name == vcc)) {
                         disconnect_port(ctx, ci, ctx->id(p));
                         ++n;
+                        // Same mechanism as the PWRDWN fix above: a disconnected
+                        // GND-tied RST reads as asserted on the site's own floating
+                        // default unless IS_RST_INVERTED is set -- confirmed via
+                        // the same raw-bit diff against a real Vivado MMCM
+                        // bitstream (nextpnr-xilinx#177).
+                        bool rst_wanted_off = p == "RST" && nn->name == gnd;
+                        if (rst_wanted_off)
+                            ci->params[ctx->id("IS_RST_INVERTED")] = Property(1);
                     }
                 }
             }
