@@ -942,15 +942,20 @@ bool Arch::xc7_logic_tile_valid(IdString tileType, LogicTileStatus &lts) const
                 for (int z = 4 * i; z < 4 * (i + 1); z++) {
                     for (int k = 0; k < 2; k++) {
                         CellInfo *lut = lts.cells[z << 4 | (BEL_6LUT + k)];
-                        if (lut == nullptr)
+                        bool lut_is_absent = lut == nullptr;
+                        if (lut_is_absent)
                             continue;
-                        if (!lut->lutInfo.is_memory && !lut->lutInfo.is_srl)
+                        bool lut_is_not_memory_or_srl = !lut->lutInfo.is_memory && !lut->lutInfo.is_srl;
+                        if (lut_is_not_memory_or_srl)
                             continue;
-                        if (lut->lutInfo.we == nullptr)
+                        bool lut_has_no_we = lut->lutInfo.we == nullptr;
+                        if (lut_has_no_we)
                             continue;
-                        if (we == nullptr) {
+                        bool we_not_yet_recorded = we == nullptr;
+                        bool we_disagrees_with_recorded = we != lut->lutInfo.we;
+                        if (we_not_yet_recorded) {
                             we = lut->lutInfo.we;
-                        } else if (we != lut->lutInfo.we) {
+                        } else if (we_disagrees_with_recorded) {
                             if (dbg_validity_runtime)
                                 log_info("  invalid-arm: half-tile WE mismatch: %s vs %s\n", nameOf(we),
                                          nameOf(lut->lutInfo.we));
