@@ -358,8 +358,9 @@ void Arch::routeConstants(std::function<void()> reroute)
         given_up_list.push_back(std::make_pair(h, why));
     };
     int drivers = 0, dont_care = 0, passes = 0;
+    std::vector<ConstHoldout> holdouts;
     for (int pass = 0;; pass++) {
-        auto holdouts = routeVcc();
+        holdouts = routeVcc();
         std::vector<ConstHoldout> real;
         for (auto &h : holdouts) {
             // Don't-cares first: a pin nothing selects is never an error.
@@ -423,6 +424,20 @@ void Arch::routeConstants(std::function<void()> reroute)
         log_info("Constant holdouts: %d local constant LUT(s) added, %d re-route pass(es), %d don't-care CARRY4 DI "
                  "pin(s) left unrouted\n",
                  drivers, passes, dont_care);
+    // Only report sinks the final fill still left unreached.
+    std::set<std::pair<IdString, IdString>> still_left;
+    for (auto &h : holdouts)
+        still_left.insert(std::make_pair(h.cell->name, h.port));
+    for (auto it = given_up_list.begin(); it != given_up_list.end();) {
+        const bool still_unreached = still_left.count(std::make_pair(it->first.cell->name, it->first.port)) != 0;
+        if (still_unreached) {
+            ++it;
+            continue;
+        }
+        log_info("    %s.%s reached by the final constant fill after all\n", it->first.cell->name.c_str(ctx),
+                 it->first.port.c_str(ctx));
+        it = given_up_list.erase(it);
+    }
     const bool have_leftovers = !given_up_list.empty();
     if (have_leftovers)
         report(given_up_list);
