@@ -106,15 +106,18 @@ jobs:
           '
 
       - name: Build chipdb (${{ matrix.part }})
+        env:
+          PART: ${{ matrix.part }}
         run: |
           nix develop ./toolchain-nix --command bash -euxo pipefail -c '
+            dbpart="${PART%-[0-9]}"
             mkdir -p chipdb
             python3 nextpnr-xilinx/xilinx/python/bbaexport.py \
-              --device ${{ matrix.part }} \
+              --device "$PART" \
               --xray nextpnr-xilinx/xilinx/external/prjxray-db/${{ matrix.family }} \
-              --bba ${{ matrix.part }}.bba
-            build-pr/bbasm -l ${{ matrix.part }}.bba chipdb/${{ matrix.part }}.bin
-            rm -f ${{ matrix.part }}.bba
+              --bba "$dbpart.bba"
+            build-pr/bbasm -l "$dbpart.bba" "chipdb/$dbpart.bin"
+            rm -f "$dbpart.bba"
           '
 
       # FASM-level regression cases (demo-projects/regression/, one
@@ -179,6 +182,7 @@ jobs:
               *) echo "::error::demos gate is not using this PR's nextpnr-xilinx"; exit 1 ;;
             esac
             normhash() { python3 demo-projects/.github/scripts/normbit.py "$1"; }
+            chipdb_before=$(sha256sum chipdb/*.bin)
             for p in $PROJECTS; do
               if ls "demo-projects/$p"/*.bit >/dev/null 2>&1; then
                 cp "demo-projects/$p"/*.bit /tmp/golden-$p
@@ -197,6 +201,11 @@ jobs:
                 echo "no golden for $p, build-only"
               fi
             done
+            chipdb_after=$(sha256sum chipdb/*.bin)
+            if [ "$chipdb_before" != "$chipdb_after" ]; then
+              echo "::error::demos gate did not use this PR's chipdb (chipdb/*.bin changed during the build)"
+              exit 1
+            fi
           EOF
 
       # Built bitstreams are the primary debugging output of this gate;
