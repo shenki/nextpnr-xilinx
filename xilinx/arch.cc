@@ -941,6 +941,7 @@ std::vector<Arch::ConstHoldout> Arch::routeVcc()
         if (src != WireId())
             bindWire(src, net, STRENGTH_STRONG);
         int unrouted = 0, max_iter_seen = 0;
+        std::vector<ConstHoldout> net_holdouts;
         for (auto &usr : net->users) {
             std::queue<WireId> visit;
             std::unordered_map<WireId, PipId> backtrace;
@@ -982,10 +983,7 @@ std::vector<Arch::ConstHoldout> Arch::routeVcc()
                 ++unrouted;
                 log_info("    %s HOLDOUT: %s.%s (bel %s, wire %s)\n", cn.first.c_str(this), usr.cell->name.c_str(this),
                          usr.port.c_str(this), nameOfBel(usr.cell->bel), nameOfWire(sink));
-                holdouts.push_back(ConstHoldout{net, usr.cell, usr.port, pseudo_intent == ID_PSEUDO_VCC});
-                if (holdout_out.is_open() && cn.second == ID_PSEUDO_GND)
-                    holdout_out << usr.cell->name.c_str(this) << " "
-                                << usr.port.c_str(this) << "\n";
+                net_holdouts.push_back(ConstHoldout{net, usr.cell, usr.port, pseudo_intent == ID_PSEUDO_VCC});
                 continue;
             }
             while (backtrace.count(dest)) {
@@ -996,6 +994,25 @@ std::vector<Arch::ConstHoldout> Arch::routeVcc()
                 if (getBoundPipNet(uh) == nullptr)
                     bindPip(uh, net, STRENGTH_STRONG);
             }
+        }
+        // Users sharing a site wire (SLICEM WA1..6 and A1..6) are reached once
+        // the per-user BFS binds that wire for any of them.
+        for (auto &h : net_holdouts) {
+            PortRef pr;
+            pr.cell = h.cell;
+            pr.port = h.port;
+            WireId sink = getCtx()->getNetinfoSinkWire(net, pr);
+            const bool wire_bound_for_later_user = getBoundWireNet(sink) == net;
+            if (wire_bound_for_later_user) {
+                --unrouted;
+                log_info("    %s HOLDOUT %s.%s reached after all: wire %s bound for a later user\n",
+                         cn.first.c_str(this), h.cell->name.c_str(this), h.port.c_str(this), nameOfWire(sink));
+                continue;
+            }
+            holdouts.push_back(h);
+            const bool dump_gnd_holdout = holdout_out.is_open() && cn.second == ID_PSEUDO_GND;
+            if (dump_gnd_holdout)
+                holdout_out << h.cell->name.c_str(this) << " " << h.port.c_str(this) << "\n";
         }
         log_info("    %s: %d/%d sinks bridged (%d holdouts; max BFS %d)\n", cn.first.c_str(this),
                  int(net->users.size()) - unrouted, int(net->users.size()), unrouted, max_iter_seen);
